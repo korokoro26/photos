@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instant Photo Share - Supabase版</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 1. Supabase JS Client (CDN) を追加 -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            background-color: #F2F2F7;
+        }
+    </style>
+</head>
+<body class="text-slate-900 min-h-screen flex flex-col justify-between selection:bg-blue-500 selection:text-white">
+
+    <div id="app" class="flex-1 flex flex-col max-w-md mx-auto w-full min-h-screen bg-white shadow-xl relative pb-20">
+        
+        <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i data-lucide="camera" class="w-6 h-6 text-blue-600"></i>
+                <h1 class="font-bold text-lg tracking-tight">SnapVanis</h1>
+            </div>
+            <span class="text-[10px] text-slate-400 font-mono">v2.0.0 (Supabase)</span>
+        </header>
+
+        <main class="p-4 flex-1">
+
+            <!-- 写真投稿エリア -->
+            <section class="mb-6 bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 text-center">
+                <div v-if="!imagePreview" class="flex flex-col items-center justify-center py-4">
+                    <div class="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 mb-2">
+                        <i data-lucide="upload-cloud" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-3">写真を全員に共有（5分後に自動消去）</p>
+                    <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all text-white text-sm font-medium px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
+                        <i data-lucide="image" class="w-4 h-4"></i>
+                        写真を選択
+                        <input type="file" accept="image/*" class="hidden" @change="handleFileSelect">
+                    </label>
+                </div>
+
+                <div v-else class="space-y-3">
+                    <div class="relative rounded-xl overflow-hidden max-h-56 bg-black flex items-center justify-center">
+                        <img :src="imagePreview" class="object-contain max-h-56 w-full" alt="Preview">
+                        <button @click="cancelPost" class="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition-all">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    
+                    <input 
+                        v-model="newCaption" 
+                        type="text" 
+                        placeholder="キャプションを入力（任意）" 
+                        class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                        maxlength="50"
+                    >
+
+                    <p v-if="errorMessage" class="text-xs text-red-500 text-left flex items-center gap-1">
+                        <i data-lucide="alert-circle" class="w-3.5 h-3.5"></i>
+                        {{ errorMessage }}
+                    </p>
+
+                    <button 
+                        @click="uploadPhoto" 
+                        :disabled="isUploading"
+                        class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 active:scale-98 transition-all text-white text-sm font-semibold py-2.5 rounded-xl shadow-md flex items-center justify-center gap-2"
+                    >
+                        <i data-lucide="send" class="w-4 h-4"></i>
+                        {{ isUploading ? 'アップロード中...' : '全員に共有を開始する' }}
+                    </button>
+                </div>
+            </section>
+
+            <!-- タイムラインエリア -->
+            <section>
+                <div class="flex items-center justify-between mb-3 px-1">
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">共有中の写真 ({{ photos.length }})</h2>
+                    <span class="text-xs text-slate-400 flex items-center gap-1">
+                        <i data-lucide="clock" class="w-3 h-3"></i> 5分で消滅
+                    </span>
+                </div>
+
+                <div v-if="photos.length > 0" class="space-y-4">
+                    <div 
+                        v-for="photo in photos" 
+                        :key="photo.id" 
+                        class="bg-white border border-slate-100 rounded-2xl p-3 shadow-sm transition-all hover:shadow-md"
+                    >
+                        <div class="relative rounded-xl overflow-hidden bg-slate-900 mb-2 group">
+                            <img :src="photo.src" class="w-full h-64 object-cover" :alt="photo.caption">
+                            
+                            <div class="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[11px] font-mono font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+                                <i data-lucide="timer" class="w-3.5 h-3.5 text-amber-400"></i>
+                                残り {{ formatTimeLeft(photo.expiresAt) }}
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-2 px-1">
+                            <div v-if="editingId !== photo.id" class="flex-1">
+                                <p class="text-sm font-medium text-slate-800 break-all">
+                                    {{ photo.caption || '（キャプションなし）' }}
+                                </p>
+                                <span class="text-[10px] text-slate-400">
+                                    投稿日時: {{ formatCreatedTime(photo.createdAt) }}
+                                </span>
+                            </div>
+
+                            <div v-else class="flex-1 flex gap-1">
+                                <input 
+                                    v-model="editCaptionText" 
+                                    type="text" 
+                                    class="text-sm px-2 py-1 border border-blue-400 rounded-lg w-full focus:outline-none"
+                                    maxlength="50"
+                                    @keyup.enter="saveEdit(photo.id)"
+                                >
+                                <button @click="saveEdit(photo.id)" class="bg-blue-600 text-white px-2 py-1 rounded-lg text-xs font-medium">
+                                    保存
+                                </button>
+                                <button @click="cancelEdit" class="bg-slate-200 text-slate-600 px-2 py-1 rounded-lg text-xs">
+                                    キャンセル
+                                </button>
+                            </div>
+
+                            <div v-if="editingId !== photo.id" class="flex items-center gap-1 text-slate-400">
+                                <button @click="startEdit(photo)" class="p-1.5 hover:text-blue-600 rounded-lg transition-colors">
+                                    <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                </button>
+                                <button @click="deletePhoto(photo.id)" class="p-1.5 hover:text-red-600 rounded-lg transition-colors">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else class="text-center py-12 px-4 border border-dashed border-slate-200 rounded-2xl bg-white/50">
+                    <div class="w-12 h-12 mx-auto mb-3 text-slate-300 flex items-center justify-center rounded-full bg-slate-100">
+                        <i data-lucide="ghost" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-sm font-medium text-slate-500">投稿された写真はありません</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // ----------------------------------------------------
+        // 2. SUPABASE の初期化（ご自身のAPIキーに書き換えてください）
+        // ----------------------------------------------------
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const photos = ref([]);
+                const imagePreview = ref(null);
+                const selectedFile = ref(null);
+                const newCaption = ref('');
+                const errorMessage = ref('');
+                const isUploading = ref(false);
+                
+                const editingId = ref(null);
+                const editCaptionText = ref('');
+
+                const EXPIRATION_TIME_MS = 5 * 60 * 1000;
+                let timerInterval = null;
+                let realtimeChannel = null;
+
+                // --- Supabase CRUD 操作 ---
+
+                // [Read] Supabaseからデータ取得
+                const fetchPhotos = async () => {
+                    const nowIso = new Date().toISOString();
+                    
+                    // 期限切れでない写真のみ取得 (作成日時昇順)
+                    const { data, error } = await supabase
+                        .from('photos')
+                        .select('*')
+                        .gt('expires_at', nowIso)
+                        .order('created_at', { ascending: false });
+
+                    if (error) {
+                        console.error('Fetch error:', error);
+                        return;
+                    }
+
+                    photos.value = data.map(item => ({
+                        id: item.id,
+                        src: item.image_url,
+                        caption: item.caption,
+                        createdAt: new Date(item.created_at).getTime(),
+                        expiresAt: new Date(item.expires_at).getTime()
+                    }));
+
+                    nextTick(() => lucide.createIcons());
+                };
+
+                // [Create] Supabase Storage と DB へ保存
+                const uploadPhoto = async () => {
+                    if (!selectedFile.value) {
+                        errorMessage.value = '写真を選択してください。';
+                        return;
+                    }
+
+                    isUploading.value = true;
+                    errorMessage.value = '';
+
+                    try {
+                        const file = selectedFile.value;
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+                        // 1. Storage に画像アップロード
+                        const { data: storageData, error: storageError } = await supabase.storage
+                            .from('photos')
+                            .upload(fileName, file);
+
+                        if (storageError) throw storageError;
+
+                        // 2. 公開URLを取得
+                        const { data: publicUrlData } = supabase.storage
+                            .from('photos')
+                            .getPublicUrl(fileName);
+
+                        const now = Date.now();
+                        const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
+
+                        // 3. Database にレコード追加
+                        const { error: dbError } = await supabase
+                            .from('photos')
+                            .insert([
+                                {
+                                    image_url: publicUrlData.publicUrl,
+                                    caption: newCaption.value.trim(),
+                                    expires_at: expiresAtIso
+                                }
+                            ]);
+
+                        if (dbError) throw dbError;
+
+                        cancelPost();
+                    } catch (err) {
+                        console.error('Upload Failed:', err);
+                        errorMessage.value = 'アップロードに失敗しました。';
+                    } finally {
+                        isUploading.value = false;
+                    }
+                };
+
+                // [Update] キャプション保存
+                const saveEdit = async (id) => {
+                    const { error } = await supabase
+                        .from('photos')
+                        .update({ caption: editCaptionText.value.trim() })
+                        .eq('id', id);
+
+                    if (error) {
+                        console.error('Update failed:', error);
+                    } else {
+                        cancelEdit();
+                    }
+                };
+
+                // [Delete] 写真の削除
+                const deletePhoto = async (id) => {
+                    const { error } = await supabase
+                        .from('photos')
+                        .delete()
+                        .eq('id', id);
+
+                    if (error) console.error('Delete failed:', error);
+                };
+
+                // ----------------------------------------------------
+                // Realtime（リアルタイム同期機能）
+                // ----------------------------------------------------
+                const subscribeRealtime = () => {
+                    realtimeChannel = supabase
+                        .channel('public:photos')
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload) => {
+                            // データベースに変更があったら再取得して全ユーザーに即時反映
+                            fetchPhotos();
+                        })
+                        .subscribe();
+                };
+
+                // --- ユーティリティ ---
+                const handleFileSelect = (event) => {
+                    errorMessage.value = '';
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    if (!file.type.startsWith('image/')) {
+                        errorMessage.value = '画像ファイルを選択してください。';
+                        return;
+                    }
+
+                    selectedFile.value = file;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        imagePreview.value = e.target.result;
+                        nextTick(() => lucide.createIcons());
+                    };
+                    reader.readAsDataURL(file);
+                };
+
+                const cancelPost = () => {
+                    imagePreview.value = null;
+                    selectedFile.value = null;
+                    newCaption.value = '';
+                    errorMessage.value = '';
+                    nextTick(() => lucide.createIcons());
+                };
+
+                const startEdit = (photo) => {
+                    editingId.value = photo.id;
+                    editCaptionText.value = photo.caption;
+                    nextTick(() => lucide.createIcons());
+                };
+
+                const cancelEdit = () => {
+                    editingId.value = null;
+                    editCaptionText.value = '';
+                    nextTick(() => lucide.createIcons());
+                };
+
+                const formatTimeLeft = (expiresAt) => {
+                    const diff = expiresAt - Date.now();
+                    if (diff <= 0) return '00:00';
+                    const totalSeconds = Math.floor(diff / 1000);
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = totalSeconds % 60;
+                    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                };
+
+                const formatCreatedTime = (timestamp) => {
+                    return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                };
+
+                // クライアント側タイマー（画面上の残り時間カウントダウン表示用）
+                const startExpirationCheck = () => {
+                    timerInterval = setInterval(() => {
+                        const now = Date.now();
+                        photos.value = photos.value.filter(photo => photo.expiresAt > now);
+                    }, 1000);
+                };
+
+                onMounted(() => {
+                    fetchPhotos();
+                    subscribeRealtime();
+                    startExpirationCheck();
+                    lucide.createIcons();
+                });
+
+                onUnmounted(() => {
+                    if (timerInterval) clearInterval(timerInterval);
+                    if (realtimeChannel) supabase.removeChannel(realtimeChannel);
+                });
+
+                return {
+                    photos,
+                    imagePreview,
+                    newCaption,
+                    errorMessage,
+                    isUploading,
+                    editingId,
+                    editCaptionText,
+                    handleFileSelect,
+                    uploadPhoto,
+                    cancelPost,
+                    deletePhoto,
+                    startEdit,
+                    saveEdit,
+                    cancelEdit,
+                    formatTimeLeft,
+                    formatCreatedTime
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
