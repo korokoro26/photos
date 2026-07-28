@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instant Photo Share - Supabase版</title>
+    <title>Instant Photo Share - SnapVanis</title>
 
+    <!-- Tailwind CSS (スタイリング) -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons (アイコン) -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Vue.js 3 (UIフレームワーク) -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Supabase JS Client (データベース/ストレージ) -->
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
     <style>
@@ -16,45 +20,67 @@
             -webkit-font-smoothing: antialiased;
             background-color: #F2F2F7;
         }
-        /* Vueが読み込まれるまでのちらつき（マスタッシュ構文露呈）を防止 */
+        
+        /* 【重要】Vueが正常にマウントされるまで {{ ... }} を完全に非表示にするセキュリティCSS */
         [v-cloak] {
             display: none !important;
+        }
+
+        .fade-enter-active, .fade-leave-active {
+            transition: opacity 0.2s ease;
+        }
+        .fade-enter-from, .fade-leave-to {
+            opacity: 0;
         }
     </style>
 </head>
 <body class="text-slate-900 min-h-screen flex flex-col justify-between selection:bg-blue-500 selection:text-white">
 
-    <!-- v-cloak を追加してVue未ロード時の文字列チラつきを防止 -->
+    <!-- v-cloak 属性により、Vueマウント前は描画を隠蔽します -->
     <div id="app" v-cloak class="flex-1 flex flex-col max-w-md mx-auto w-full min-h-screen bg-white shadow-xl relative pb-20">
         
+        <!-- ヘッダー -->
         <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-4 py-3 flex justify-between items-center">
             <div class="flex items-center gap-2">
                 <i data-lucide="camera" class="w-6 h-6 text-blue-600"></i>
                 <h1 class="font-bold text-lg tracking-tight">SnapVanis</h1>
             </div>
-            <span class="text-[10px] text-slate-400 font-mono">v2.0.1 (Fixed)</span>
+            <span class="text-[10px] text-slate-400 font-mono">v2.0.2 (Production Stable)</span>
         </header>
+
+        <!-- APIキー未設定・接続エラーアラート警告バー -->
+        <div v-if="configError" class="bg-amber-50 border-b border-amber-200 p-3 text-xs text-amber-800 flex items-start gap-2">
+            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+            <div>
+                <p class="font-bold">Supabase設定が未完了です</p>
+                <p class="text-[11px] mt-0.5 text-amber-700">
+                    コード内の <code>SUPABASE_URL</code> と <code>SUPABASE_ANON_KEY</code> を正しい値に書き換えてください。（現在ローカルプレビューモード動作中）
+                </p>
+            </div>
+        </div>
 
         <main class="p-4 flex-1">
 
             <!-- 写真投稿エリア -->
             <section class="mb-6 bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 text-center">
+                <!-- ファイル未選択時 -->
                 <div v-if="!imagePreview" class="flex flex-col items-center justify-center py-4">
                     <div class="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 mb-2">
                         <i data-lucide="upload-cloud" class="w-6 h-6"></i>
                     </div>
                     <p class="text-xs text-slate-500 mb-3">写真を全員に共有（5分後に自動消去）</p>
-                    <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all text-white text-sm font-medium px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
+                    <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all text-white text-sm font-medium px-4 py-2 rounded-full shadow-sm flex items-center gap-2 inline-flex">
                         <i data-lucide="image" class="w-4 h-4"></i>
-                        写真を選択
+                        <span>写真を選択</span>
                         <input type="file" accept="image/*" class="hidden" @change="handleFileSelect">
                     </label>
                 </div>
 
+                <!-- 選択後のプレビュー -->
                 <div v-else class="space-y-3">
                     <div class="relative rounded-xl overflow-hidden max-h-56 bg-black flex items-center justify-center">
                         <img :src="imagePreview" class="object-contain max-h-56 w-full" alt="Preview">
-                        <button @click="cancelPost" class="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition-all">
+                        <button @click="cancelPost" type="button" class="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition-all">
                             <i data-lucide="x" class="w-4 h-4"></i>
                         </button>
                     </div>
@@ -67,14 +93,16 @@
                         maxlength="50"
                     >
 
-                    <p v-if="errorMessage" class="text-xs text-red-500 text-left flex items-center gap-1">
-                        <i data-lucide="alert-circle" class="w-3.5 h-3.5"></i>
-                        {{ errorMessage }}
+                    <!-- エラー表示 -->
+                    <p v-if="errorMessage" class="text-xs text-red-500 text-left flex items-center gap-1 font-medium">
+                        <i data-lucide="alert-circle" class="w-3.5 h-3.5 shrink-0"></i>
+                        <span>{{ errorMessage }}</span>
                     </p>
 
                     <button 
                         @click="uploadPhoto" 
                         :disabled="isUploading"
+                        type="button"
                         class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 active:scale-98 transition-all text-white text-sm font-semibold py-2.5 rounded-xl shadow-md flex items-center justify-center gap-2"
                     >
                         <i data-lucide="send" class="w-4 h-4"></i>
@@ -86,37 +114,45 @@
             <!-- タイムラインエリア -->
             <section>
                 <div class="flex items-center justify-between mb-3 px-1">
-                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">共有中の写真 ({{ photos.length }})</h2>
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        共有中の写真 ({{ photos.length }})
+                    </h2>
                     <span class="text-xs text-slate-400 flex items-center gap-1">
-                        <i data-lucide="clock" class="w-3 h-3"></i> 5分で消滅
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i> 5分で消滅
                     </span>
                 </div>
 
+                <!-- 写真一覧表示 -->
                 <div v-if="photos.length > 0" class="space-y-4">
                     <div 
                         v-for="photo in photos" 
                         :key="photo.id" 
                         class="bg-white border border-slate-100 rounded-2xl p-3 shadow-sm transition-all hover:shadow-md"
                     >
+                        <!-- 画像表示 -->
                         <div class="relative rounded-xl overflow-hidden bg-slate-900 mb-2 group">
                             <img :src="photo.src" class="w-full h-64 object-cover" :alt="photo.caption">
                             
+                            <!-- タイマーバッジ -->
                             <div class="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[11px] font-mono font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
                                 <i data-lucide="timer" class="w-3.5 h-3.5 text-amber-400"></i>
-                                残り {{ formatTimeLeft(photo.expiresAt) }}
+                                <span>残り {{ formatTimeLeft(photo.expiresAt) }}</span>
                             </div>
                         </div>
 
+                        <!-- 編集・削除制御 -->
                         <div class="flex items-start justify-between gap-2 px-1">
-                            <div v-if="editingId !== photo.id" class="flex-1">
+                            <!-- 通常表示 -->
+                            <div v-if="editingId !== photo.id" class="flex-1 min-w-0">
                                 <p class="text-sm font-medium text-slate-800 break-all">
                                     {{ photo.caption || '（キャプションなし）' }}
                                 </p>
-                                <span class="text-[10px] text-slate-400">
+                                <span class="text-[10px] text-slate-400 block mt-0.5">
                                     投稿日時: {{ formatCreatedTime(photo.createdAt) }}
                                 </span>
                             </div>
 
+                            <!-- 編集モード -->
                             <div v-else class="flex-1 flex gap-1">
                                 <input 
                                     v-model="editCaptionText" 
@@ -125,19 +161,20 @@
                                     maxlength="50"
                                     @keyup.enter="saveEdit(photo.id)"
                                 >
-                                <button @click="saveEdit(photo.id)" class="bg-blue-600 text-white px-2 py-1 rounded-lg text-xs font-medium">
+                                <button @click="saveEdit(photo.id)" type="button" class="bg-blue-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium shrink-0">
                                     保存
                                 </button>
-                                <button @click="cancelEdit" class="bg-slate-200 text-slate-600 px-2 py-1 rounded-lg text-xs">
+                                <button @click="cancelEdit" type="button" class="bg-slate-200 text-slate-600 px-2 py-1 rounded-lg text-xs shrink-0">
                                     キャンセル
                                 </button>
                             </div>
 
-                            <div v-if="editingId !== photo.id" class="flex items-center gap-1 text-slate-400">
-                                <button @click="startEdit(photo)" class="p-1.5 hover:text-blue-600 rounded-lg transition-colors">
+                            <!-- ボタン群 -->
+                            <div v-if="editingId !== photo.id" class="flex items-center gap-1 text-slate-400 shrink-0">
+                                <button @click="startEdit(photo)" type="button" class="p-1.5 hover:text-blue-600 hover:bg-slate-50 rounded-lg transition-colors" title="編集">
                                     <i data-lucide="edit-3" class="w-4 h-4"></i>
                                 </button>
-                                <button @click="deletePhoto(photo.id)" class="p-1.5 hover:text-red-600 rounded-lg transition-colors">
+                                <button @click="deletePhoto(photo.id)" type="button" class="p-1.5 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors" title="削除">
                                     <i data-lucide="trash-2" class="w-4 h-4"></i>
                                 </button>
                             </div>
@@ -145,256 +182,308 @@
                     </div>
                 </div>
 
+                <!-- 空状態 -->
                 <div v-else class="text-center py-12 px-4 border border-dashed border-slate-200 rounded-2xl bg-white/50">
                     <div class="w-12 h-12 mx-auto mb-3 text-slate-300 flex items-center justify-center rounded-full bg-slate-100">
                         <i data-lucide="ghost" class="w-6 h-6"></i>
                     </div>
                     <p class="text-sm font-medium text-slate-500">投稿された写真はありません</p>
+                    <p class="text-xs text-slate-400 mt-1">写真をアップロードすると5分間だけ全員に共有されます。</p>
                 </div>
             </section>
         </main>
     </div>
 
+    <!-- JavaScript ロジック -->
     <script>
-        // 1. SUPABASE の設定（ここをご自身のキーとURLに差し替えてください）
-        const SUPABASE_URL = 'https://hkkrhhswonetzyosfqwy.supabase.co/rest/v1/';
-        const SUPABASE_ANON_KEY = 'sb_publishable_xl1laO7ZxLdS0LlaHwsahg_nPxScDGm';
-        
-        let supabase = null;
-        try {
-            if (window.supabase && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
-                supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // DOM構築完了後にVueを安全に初期化
+        window.addEventListener('DOMContentLoaded', () => {
+            
+            // ----------------------------------------------------
+            // 1. SUPABASE 設定領域（ご自身の環境の値を入力してください）
+            // ----------------------------------------------------
+            const SUPABASE_URL = 'https://hkkrhhswonetzyosfqwy.supabase.co/rest/v1/';
+            const SUPABASE_ANON_KEY = 'sb_publishable_xl1laO7ZxLdS0LlaHwsahg_nPxScDGm';
+
+            // 例外を抑止する安全なSupabase初期化
+            let supabase = null;
+            let isConfigValid = false;
+
+            try {
+                if (
+                    typeof window.supabase !== 'undefined' && 
+                    SUPABASE_URL && 
+                    SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
+                    SUPABASE_ANON_KEY &&
+                    SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY'
+                ) {
+                    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                    isConfigValid = true;
+                }
+            } catch (e) {
+                console.warn('Supabase Client initialization skipped or failed:', e);
             }
-        } catch (e) {
-            console.error('Supabase init error:', e);
-        }
 
-        const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
+            const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
 
-        createApp({
-            setup() {
-                const photos = ref([]);
-                const imagePreview = ref(null);
-                const selectedFile = ref(null);
-                const newCaption = ref('');
-                const errorMessage = ref('');
-                const isUploading = ref(false);
-                
-                const editingId = ref(null);
-                const editCaptionText = ref('');
+            createApp({
+                setup() {
+                    const photos = ref([]);
+                    const imagePreview = ref(null);
+                    const selectedFile = ref(null);
+                    const newCaption = ref('');
+                    const errorMessage = ref('');
+                    const isUploading = ref(false);
+                    const configError = ref(!isConfigValid);
 
-                const EXPIRATION_TIME_MS = 5 * 60 * 1000;
-                let timerInterval = null;
-                let realtimeChannel = null;
+                    const editingId = ref(null);
+                    const editCaptionText = ref('');
 
-                // [Read] データ取得
-                const fetchPhotos = async () => {
-                    if (!supabase) return;
-                    const nowIso = new Date().toISOString();
-                    
-                    const { data, error } = await supabase
-                        .from('photos')
-                        .select('*')
-                        .gt('expires_at', nowIso)
-                        .order('created_at', { ascending: false });
+                    const EXPIRATION_TIME_MS = 5 * 60 * 1000; // 5分
+                    let timerInterval = null;
+                    let realtimeChannel = null;
 
-                    if (error) {
-                        console.error('Fetch error:', error);
-                        return;
-                    }
-
-                    photos.value = data.map(item => ({
-                        id: item.id,
-                        src: item.image_url,
-                        caption: item.caption,
-                        createdAt: new Date(item.created_at).getTime(),
-                        expiresAt: new Date(item.expires_at).getTime()
-                    }));
-
-                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
-                };
-
-                // [Create] 保存処理
-                const uploadPhoto = async () => {
-                    if (!selectedFile.value) {
-                        errorMessage.value = '写真を選択してください。';
-                        return;
-                    }
-                    if (!supabase) {
-                        errorMessage.value = 'Supabaseのキーが正しく設定されていません。';
-                        return;
-                    }
-
-                    isUploading.value = true;
-                    errorMessage.value = '';
-
-                    try {
-                        const file = selectedFile.value;
-                        const fileExt = file.name.split('.').pop();
-                        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-                        const { error: storageError } = await supabase.storage
-                            .from('photos')
-                            .upload(fileName, file);
-
-                        if (storageError) throw storageError;
-
-                        const { data: publicUrlData } = supabase.storage
-                            .from('photos')
-                            .getPublicUrl(fileName);
-
-                        const now = Date.now();
-                        const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
-
-                        const { error: dbError } = await supabase
-                            .from('photos')
-                            .insert([
-                                {
-                                    image_url: publicUrlData.publicUrl,
-                                    caption: newCaption.value.trim(),
-                                    expires_at: expiresAtIso
-                                }
-                            ]);
-
-                        if (dbError) throw dbError;
-
-                        cancelPost();
-                    } catch (err) {
-                        console.error('Upload Failed:', err);
-                        errorMessage.value = 'アップロードに失敗しました。';
-                    } finally {
-                        isUploading.value = false;
-                    }
-                };
-
-                // [Update] キャプション更新
-                const saveEdit = async (id) => {
-                    if (!supabase) return;
-                    const { error } = await supabase
-                        .from('photos')
-                        .update({ caption: editCaptionText.value.trim() })
-                        .eq('id', id);
-
-                    if (error) {
-                        console.error('Update failed:', error);
-                    } else {
-                        cancelEdit();
-                    }
-                };
-
-                // [Delete] 削除
-                const deletePhoto = async (id) => {
-                    if (!supabase) return;
-                    const { error } = await supabase
-                        .from('photos')
-                        .delete()
-                        .eq('id', id);
-
-                    if (error) console.error('Delete failed:', error);
-                };
-
-                // Realtime（リアルタイム通信）
-                const subscribeRealtime = () => {
-                    if (!supabase) return;
-                    realtimeChannel = supabase
-                        .channel('public:photos')
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, () => {
-                            fetchPhotos();
-                        })
-                        .subscribe();
-                };
-
-                const handleFileSelect = (event) => {
-                    errorMessage.value = '';
-                    const file = event.target.files[0];
-                    if (!file) return;
-
-                    if (!file.type.startsWith('image/')) {
-                        errorMessage.value = '画像ファイルを選択してください。';
-                        return;
-                    }
-
-                    selectedFile.value = file;
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        imagePreview.value = e.target.result;
-                        nextTick(() => { if (window.lucide) lucide.createIcons(); });
+                    // 安全なアイコン更新処理
+                    const refreshIcons = () => {
+                        nextTick(() => {
+                            if (typeof window.lucide !== 'undefined' && typeof lucide.createIcons === 'function') {
+                                lucide.createIcons();
+                            }
+                        });
                     };
-                    reader.readAsDataURL(file);
-                };
 
-                const cancelPost = () => {
-                    imagePreview.value = null;
-                    selectedFile.value = null;
-                    newCaption.value = '';
-                    errorMessage.value = '';
-                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
-                };
+                    // [Read] 写真一覧の読み込み
+                    const fetchPhotos = async () => {
+                        if (!supabase) return;
+                        
+                        try {
+                            const nowIso = new Date().toISOString();
+                            const { data, error } = await supabase
+                                .from('photos')
+                                .select('*')
+                                .gt('expires_at', nowIso)
+                                .order('created_at', { ascending: false });
 
-                const startEdit = (photo) => {
-                    editingId.value = photo.id;
-                    editCaptionText.value = photo.caption;
-                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
-                };
+                            if (error) throw error;
 
-                const cancelEdit = () => {
-                    editingId.value = null;
-                    editCaptionText.value = '';
-                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
-                };
+                            if (data) {
+                                photos.value = data.map(item => ({
+                                    id: item.id,
+                                    src: item.image_url,
+                                    caption: item.caption,
+                                    createdAt: new Date(item.created_at).getTime(),
+                                    expiresAt: new Date(item.expires_at).getTime()
+                                }));
+                            }
+                        } catch (err) {
+                            console.error('Fetch Photos Error:', err);
+                        } finally {
+                            refreshIcons();
+                        }
+                    };
 
-                const formatTimeLeft = (expiresAt) => {
-                    const diff = expiresAt - Date.now();
-                    if (diff <= 0) return '00:00';
-                    const totalSeconds = Math.floor(diff / 1000);
-                    const minutes = Math.floor(totalSeconds / 60);
-                    const seconds = totalSeconds % 60;
-                    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-                };
+                    // [Create] 写真のアップロード
+                    const uploadPhoto = async () => {
+                        if (!selectedFile.value) {
+                            errorMessage.value = '写真を選択してください。';
+                            return;
+                        }
 
-                const formatCreatedTime = (timestamp) => {
-                    return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-                };
+                        if (!supabase) {
+                            errorMessage.value = 'Supabaseの設定キーが未設定のため送信できません。';
+                            return;
+                        }
 
-                const startExpirationCheck = () => {
-                    timerInterval = setInterval(() => {
-                        const now = Date.now();
-                        photos.value = photos.value.filter(photo => photo.expiresAt > now);
-                    }, 1000);
-                };
+                        isUploading.value = true;
+                        errorMessage.value = '';
 
-                onMounted(() => {
-                    fetchPhotos();
-                    subscribeRealtime();
-                    startExpirationCheck();
-                    if (window.lucide) lucide.createIcons();
-                });
+                        try {
+                            const file = selectedFile.value;
+                            const fileExt = file.name.split('.').pop() || 'jpg';
+                            const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
 
-                onUnmounted(() => {
-                    if (timerInterval) clearInterval(timerInterval);
-                    if (realtimeChannel && supabase) supabase.removeChannel(realtimeChannel);
-                });
+                            // 1. ストレージへ画像アップロード
+                            const { error: storageError } = await supabase.storage
+                                .from('photos')
+                                .upload(fileName, file);
 
-                return {
-                    photos,
-                    imagePreview,
-                    newCaption,
-                    errorMessage,
-                    isUploading,
-                    editingId,
-                    editCaptionText,
-                    handleFileSelect,
-                    uploadPhoto,
-                    cancelPost,
-                    deletePhoto,
-                    startEdit,
-                    saveEdit,
-                    cancelEdit,
-                    formatTimeLeft,
-                    formatCreatedTime
-                };
-            }
-        }).mount('#app');
+                            if (storageError) throw storageError;
+
+                            // 2. 公開URLの取得
+                            const { data: publicUrlData } = supabase.storage
+                                .from('photos')
+                                .getPublicUrl(fileName);
+
+                            const now = Date.now();
+                            const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
+
+                            // 3. データベースへ書き込み
+                            const { error: dbError } = await supabase
+                                .from('photos')
+                                .insert([
+                                    {
+                                        image_url: publicUrlData.publicUrl,
+                                        caption: newCaption.value.trim(),
+                                        expires_at: expiresAtIso
+                                    }
+                                ]);
+
+                            if (dbError) throw dbError;
+
+                            cancelPost();
+                            await fetchPhotos();
+                        } catch (err) {
+                            console.error('Upload Error:', err);
+                            errorMessage.value = 'アップロードに失敗しました。';
+                        } finally {
+                            isUploading.value = false;
+                        }
+                    };
+
+                    // [Update] キャプション編集の保存
+                    const saveEdit = async (id) => {
+                        if (!supabase) return;
+                        try {
+                            const { error } = await supabase
+                                .from('photos')
+                                .update({ caption: editCaptionText.value.trim() })
+                                .eq('id', id);
+
+                            if (error) throw error;
+                            cancelEdit();
+                            await fetchPhotos();
+                        } catch (err) {
+                            console.error('Update Error:', err);
+                        }
+                    };
+
+                    // [Delete] 削除処理
+                    const deletePhoto = async (id) => {
+                        if (!supabase) return;
+                        try {
+                            const { error } = await supabase
+                                .from('photos')
+                                .delete()
+                                .eq('id', id);
+
+                            if (error) throw error;
+                            await fetchPhotos();
+                        } catch (err) {
+                            console.error('Delete Error:', err);
+                        }
+                    };
+
+                    // リアルタイム通信の購読
+                    const subscribeRealtime = () => {
+                        if (!supabase) return;
+                        try {
+                            realtimeChannel = supabase
+                                .channel('public:photos')
+                                .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, () => {
+                                    fetchPhotos();
+                                })
+                                .subscribe();
+                        } catch (err) {
+                            console.warn('Realtime subscription error:', err);
+                        }
+                    };
+
+                    // ファイル選択ハンドラ
+                    const handleFileSelect = (event) => {
+                        errorMessage.value = '';
+                        const file = event.target.files && event.target.files[0];
+                        if (!file) return;
+
+                        if (!file.type.startsWith('image/')) {
+                            errorMessage.value = '画像ファイルを選択してください。';
+                            return;
+                        }
+
+                        selectedFile.value = file;
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            imagePreview.value = e.target.result;
+                            refreshIcons();
+                        };
+                        reader.readAsDataURL(file);
+                    };
+
+                    const cancelPost = () => {
+                        imagePreview.value = null;
+                        selectedFile.value = null;
+                        newCaption.value = '';
+                        errorMessage.value = '';
+                        refreshIcons();
+                    };
+
+                    const startEdit = (photo) => {
+                        editingId.value = photo.id;
+                        editCaptionText.value = photo.caption;
+                        refreshIcons();
+                    };
+
+                    const cancelEdit = () => {
+                        editingId.value = null;
+                        editCaptionText.value = '';
+                        refreshIcons();
+                    };
+
+                    // 時間表示フォーマット（分:秒）
+                    const formatTimeLeft = (expiresAt) => {
+                        const diff = expiresAt - Date.now();
+                        if (diff <= 0) return '00:00';
+                        const totalSeconds = Math.floor(diff / 1000);
+                        const minutes = Math.floor(totalSeconds / 60);
+                        const seconds = totalSeconds % 60;
+                        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                    };
+
+                    const formatCreatedTime = (timestamp) => {
+                        return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                    };
+
+                    // 画面表示用タイマー（1秒更新＆期限切れ自動非表示）
+                    const startExpirationCheck = () => {
+                        timerInterval = setInterval(() => {
+                            const now = Date.now();
+                            photos.value = photos.value.filter(photo => photo.expiresAt > now);
+                        }, 1000);
+                    };
+
+                    onMounted(() => {
+                        fetchPhotos();
+                        subscribeRealtime();
+                        startExpirationCheck();
+                        refreshIcons();
+                    });
+
+                    onUnmounted(() => {
+                        if (timerInterval) clearInterval(timerInterval);
+                        if (realtimeChannel && supabase) supabase.removeChannel(realtimeChannel);
+                    });
+
+                    return {
+                        photos,
+                        imagePreview,
+                        newCaption,
+                        errorMessage,
+                        isUploading,
+                        configError,
+                        editingId,
+                        editCaptionText,
+                        handleFileSelect,
+                        uploadPhoto,
+                        cancelPost,
+                        deletePhoto,
+                        startEdit,
+                        saveEdit,
+                        cancelEdit,
+                        formatTimeLeft,
+                        formatCreatedTime
+                    };
+                }
+            }).mount('#app');
+        });
     </script>
 </body>
 </html>
