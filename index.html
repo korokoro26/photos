@@ -285,56 +285,62 @@
                     // [Create] 写真のアップロード
                     const uploadPhoto = async () => {
                         if (!selectedFile.value) {
-                            errorMessage.value = '写真を選択してください。';
-                            return;
-                        }
+        errorMessage.value = '写真を選択してください。';
+        return;
+    }
 
-                        if (!supabase) {
-                            errorMessage.value = 'Supabaseの設定キーが未設定のため送信できません。';
-                            return;
-                        }
+    if (!supabase) {
+        errorMessage.value = 'Supabaseの設定キーが未設定です。';
+        return;
+    }
 
-                        isUploading.value = true;
-                        errorMessage.value = '';
+    isUploading.value = true;
+    errorMessage.value = '';
 
-                        try {
-                            const file = selectedFile.value;
-                            const fileExt = file.name.split('.').pop() || 'jpg';
-                            const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+    try {
+        const file = selectedFile.value;
+        const fileExt = file.name.split('.').pop() || 'jpg';
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
 
-                            // 1. ストレージへ画像アップロード
-                            const { error: storageError } = await supabase.storage
-                                .from('photos')
-                                .upload(fileName, file);
+        // 1. ストレージへ画像アップロード
+        const { data: storageData, error: storageError } = await supabase.storage
+            .from('photos')
+            .upload(fileName, file);
 
-                            if (storageError) throw storageError;
+        if (storageError) {
+            console.error('Storage Error:', storageError);
+            throw new Error(`[Storageエラー] ${storageError.message}`);
+        }
 
-                            // 2. 公開URLの取得
-                            const { data: publicUrlData } = supabase.storage
-                                .from('photos')
-                                .getPublicUrl(fileName);
+        // 2. 公開URLの取得
+        const { data: publicUrlData } = supabase.storage
+            .from('photos')
+            .getPublicUrl(fileName);
 
-                            const now = Date.now();
-                            const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
+        const now = Date.now();
+        const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
 
-                            // 3. データベースへ書き込み
-                            const { error: dbError } = await supabase
-                                .from('photos')
-                                .insert([
-                                    {
-                                        image_url: publicUrlData.publicUrl,
-                                        caption: newCaption.value.trim(),
-                                        expires_at: expiresAtIso
-                                    }
-                                ]);
+        // 3. データベースへ書き込み
+        const { error: dbError } = await supabase
+            .from('photos')
+            .insert([
+                {
+                    image_url: publicUrlData.publicUrl,
+                    caption: newCaption.value.trim(),
+                    expires_at: expiresAtIso
+                }
+            ]);
 
-                            if (dbError) throw dbError;
+        if (dbError) {
+            console.error('DB Error:', dbError);
+            throw new Error(`[DBエラー] ${dbError.message}`);
+        }
 
-                            cancelPost();
-                            await fetchPhotos();
-                        } catch (err) {
-                            console.error('Upload Error:', err);
-                            errorMessage.value = 'アップロードに失敗しました。';
+        cancelPost();
+        await fetchPhotos();
+    } catch (err) {
+        console.error('Upload Error Details:', err);
+        errorMessage.value = err.message || 'アップロードに失敗しました。';
                         } finally {
                             isUploading.value = false;
                         }
