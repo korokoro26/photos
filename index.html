@@ -8,7 +8,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- 1. Supabase JS Client (CDN) を追加 -->
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
     <style>
@@ -17,18 +16,23 @@
             -webkit-font-smoothing: antialiased;
             background-color: #F2F2F7;
         }
+        /* Vueが読み込まれるまでのちらつき（マスタッシュ構文露呈）を防止 */
+        [v-cloak] {
+            display: none !important;
+        }
     </style>
 </head>
 <body class="text-slate-900 min-h-screen flex flex-col justify-between selection:bg-blue-500 selection:text-white">
 
-    <div id="app" class="flex-1 flex flex-col max-w-md mx-auto w-full min-h-screen bg-white shadow-xl relative pb-20">
+    <!-- v-cloak を追加してVue未ロード時の文字列チラつきを防止 -->
+    <div id="app" v-cloak class="flex-1 flex flex-col max-w-md mx-auto w-full min-h-screen bg-white shadow-xl relative pb-20">
         
         <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-4 py-3 flex justify-between items-center">
             <div class="flex items-center gap-2">
                 <i data-lucide="camera" class="w-6 h-6 text-blue-600"></i>
                 <h1 class="font-bold text-lg tracking-tight">SnapVanis</h1>
             </div>
-            <span class="text-[10px] text-slate-400 font-mono">v2.0.0 (Supabase)</span>
+            <span class="text-[10px] text-slate-400 font-mono">v2.0.1 (Fixed)</span>
         </header>
 
         <main class="p-4 flex-1">
@@ -74,7 +78,7 @@
                         class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 active:scale-98 transition-all text-white text-sm font-semibold py-2.5 rounded-xl shadow-md flex items-center justify-center gap-2"
                     >
                         <i data-lucide="send" class="w-4 h-4"></i>
-                        {{ isUploading ? 'アップロード中...' : '全員に共有を開始する' }}
+                        <span>{{ isUploading ? 'アップロード中...' : '全員に共有を開始する' }}</span>
                     </button>
                 </div>
             </section>
@@ -152,12 +156,18 @@
     </div>
 
     <script>
-        // ----------------------------------------------------
-        // 2. SUPABASE の初期化（ご自身のAPIキーに書き換えてください）
-        // ----------------------------------------------------
+        // 1. SUPABASE の設定（ここをご自身のキーとURLに差し替えてください）
         const SUPABASE_URL = 'https://hkkrhhswonetzyosfqwy.supabase.co/rest/v1/';
         const SUPABASE_ANON_KEY = 'sb_publishable_xl1laO7ZxLdS0LlaHwsahg_nPxScDGm';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        let supabase = null;
+        try {
+            if (window.supabase && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
+                supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            }
+        } catch (e) {
+            console.error('Supabase init error:', e);
+        }
 
         const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
 
@@ -177,13 +187,11 @@
                 let timerInterval = null;
                 let realtimeChannel = null;
 
-                // --- Supabase CRUD 操作 ---
-
-                // [Read] Supabaseからデータ取得
+                // [Read] データ取得
                 const fetchPhotos = async () => {
+                    if (!supabase) return;
                     const nowIso = new Date().toISOString();
                     
-                    // 期限切れでない写真のみ取得 (作成日時昇順)
                     const { data, error } = await supabase
                         .from('photos')
                         .select('*')
@@ -203,13 +211,17 @@
                         expiresAt: new Date(item.expires_at).getTime()
                     }));
 
-                    nextTick(() => lucide.createIcons());
+                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
                 };
 
-                // [Create] Supabase Storage と DB へ保存
+                // [Create] 保存処理
                 const uploadPhoto = async () => {
                     if (!selectedFile.value) {
                         errorMessage.value = '写真を選択してください。';
+                        return;
+                    }
+                    if (!supabase) {
+                        errorMessage.value = 'Supabaseのキーが正しく設定されていません。';
                         return;
                     }
 
@@ -221,14 +233,12 @@
                         const fileExt = file.name.split('.').pop();
                         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
 
-                        // 1. Storage に画像アップロード
-                        const { data: storageData, error: storageError } = await supabase.storage
+                        const { error: storageError } = await supabase.storage
                             .from('photos')
                             .upload(fileName, file);
 
                         if (storageError) throw storageError;
 
-                        // 2. 公開URLを取得
                         const { data: publicUrlData } = supabase.storage
                             .from('photos')
                             .getPublicUrl(fileName);
@@ -236,7 +246,6 @@
                         const now = Date.now();
                         const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
 
-                        // 3. Database にレコード追加
                         const { error: dbError } = await supabase
                             .from('photos')
                             .insert([
@@ -258,8 +267,9 @@
                     }
                 };
 
-                // [Update] キャプション保存
+                // [Update] キャプション更新
                 const saveEdit = async (id) => {
+                    if (!supabase) return;
                     const { error } = await supabase
                         .from('photos')
                         .update({ caption: editCaptionText.value.trim() })
@@ -272,8 +282,9 @@
                     }
                 };
 
-                // [Delete] 写真の削除
+                // [Delete] 削除
                 const deletePhoto = async (id) => {
+                    if (!supabase) return;
                     const { error } = await supabase
                         .from('photos')
                         .delete()
@@ -282,20 +293,17 @@
                     if (error) console.error('Delete failed:', error);
                 };
 
-                // ----------------------------------------------------
-                // Realtime（リアルタイム同期機能）
-                // ----------------------------------------------------
+                // Realtime（リアルタイム通信）
                 const subscribeRealtime = () => {
+                    if (!supabase) return;
                     realtimeChannel = supabase
                         .channel('public:photos')
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, (payload) => {
-                            // データベースに変更があったら再取得して全ユーザーに即時反映
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, () => {
                             fetchPhotos();
                         })
                         .subscribe();
                 };
 
-                // --- ユーティリティ ---
                 const handleFileSelect = (event) => {
                     errorMessage.value = '';
                     const file = event.target.files[0];
@@ -310,7 +318,7 @@
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         imagePreview.value = e.target.result;
-                        nextTick(() => lucide.createIcons());
+                        nextTick(() => { if (window.lucide) lucide.createIcons(); });
                     };
                     reader.readAsDataURL(file);
                 };
@@ -320,19 +328,19 @@
                     selectedFile.value = null;
                     newCaption.value = '';
                     errorMessage.value = '';
-                    nextTick(() => lucide.createIcons());
+                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
                 };
 
                 const startEdit = (photo) => {
                     editingId.value = photo.id;
                     editCaptionText.value = photo.caption;
-                    nextTick(() => lucide.createIcons());
+                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
                 };
 
                 const cancelEdit = () => {
                     editingId.value = null;
                     editCaptionText.value = '';
-                    nextTick(() => lucide.createIcons());
+                    nextTick(() => { if (window.lucide) lucide.createIcons(); });
                 };
 
                 const formatTimeLeft = (expiresAt) => {
@@ -348,7 +356,6 @@
                     return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
                 };
 
-                // クライアント側タイマー（画面上の残り時間カウントダウン表示用）
                 const startExpirationCheck = () => {
                     timerInterval = setInterval(() => {
                         const now = Date.now();
@@ -360,12 +367,12 @@
                     fetchPhotos();
                     subscribeRealtime();
                     startExpirationCheck();
-                    lucide.createIcons();
+                    if (window.lucide) lucide.createIcons();
                 });
 
                 onUnmounted(() => {
                     if (timerInterval) clearInterval(timerInterval);
-                    if (realtimeChannel) supabase.removeChannel(realtimeChannel);
+                    if (realtimeChannel && supabase) supabase.removeChannel(realtimeChannel);
                 });
 
                 return {
