@@ -21,7 +21,7 @@
             background-color: #F2F2F7;
         }
         
-        /* 【重要】Vueが正常にマウントされるまで {{ ... }} を完全に非表示にするセキュリティCSS */
+        /* Vueが正常にマウントされるまで {{ ... }} を完全に非表示にするCSS */
         [v-cloak] {
             display: none !important;
         }
@@ -45,16 +45,16 @@
                 <i data-lucide="camera" class="w-6 h-6 text-blue-600"></i>
                 <h1 class="font-bold text-lg tracking-tight">SnapVanis</h1>
             </div>
-            <span class="text-[10px] text-slate-400 font-mono">v2.0.2 (Production Stable)</span>
+            <span class="text-[10px] text-slate-400 font-mono">v2.0.3 (Production Ready)</span>
         </header>
 
         <!-- APIキー未設定・接続エラーアラート警告バー -->
         <div v-if="configError" class="bg-amber-50 border-b border-amber-200 p-3 text-xs text-amber-800 flex items-start gap-2">
             <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
             <div>
-                <p class="font-bold">Supabase設定が未完了です</p>
+                <p class="font-bold">Supabase接続エラー</p>
                 <p class="text-[11px] mt-0.5 text-amber-700">
-                    コード内の <code>SUPABASE_URL</code> と <code>SUPABASE_ANON_KEY</code> を正しい値に書き換えてください。（現在ローカルプレビューモード動作中）
+                    URLまたはAPIキーの設定を確認してください。
                 </p>
             </div>
         </div>
@@ -94,8 +94,8 @@
                     >
 
                     <!-- エラー表示 -->
-                    <p v-if="errorMessage" class="text-xs text-red-500 text-left flex items-center gap-1 font-medium">
-                        <i data-lucide="alert-circle" class="w-3.5 h-3.5 shrink-0"></i>
+                    <p v-if="errorMessage" class="text-xs text-red-500 text-left flex items-start gap-1 font-medium bg-red-50 p-2 rounded-lg border border-red-100">
+                        <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 mt-0.5"></i>
                         <span>{{ errorMessage }}</span>
                     </p>
 
@@ -196,32 +196,24 @@
 
     <!-- JavaScript ロジック -->
     <script>
-        // DOM構築完了後にVueを安全に初期化
         window.addEventListener('DOMContentLoaded', () => {
             
             // ----------------------------------------------------
-            // 1. SUPABASE 設定領域（ご自身の環境の値を入力してください）
+            // 1. SUPABASE 設定領域（URLの末尾の /rest/v1/ を除去して修正）
             // ----------------------------------------------------
-            const SUPABASE_URL = 'https://hkkrhhswonetzyosfqwy.supabase.co/rest/v1/';
+            const SUPABASE_URL = 'https://hkkrhhswonetzyosfqwy.supabase.co';
             const SUPABASE_ANON_KEY = 'sb_publishable_xl1laO7ZxLdS0LlaHwsahg_nPxScDGm';
 
-            // 例外を抑止する安全なSupabase初期化
             let supabase = null;
             let isConfigValid = false;
 
             try {
-                if (
-                    typeof window.supabase !== 'undefined' && 
-                    SUPABASE_URL && 
-                    SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
-                    SUPABASE_ANON_KEY &&
-                    SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY'
-                ) {
+                if (typeof window.supabase !== 'undefined' && SUPABASE_URL && SUPABASE_ANON_KEY) {
                     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
                     isConfigValid = true;
                 }
             } catch (e) {
-                console.warn('Supabase Client initialization skipped or failed:', e);
+                console.warn('Supabase Client initialization failed:', e);
             }
 
             const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
@@ -243,7 +235,6 @@
                     let timerInterval = null;
                     let realtimeChannel = null;
 
-                    // 安全なアイコン更新処理
                     const refreshIcons = () => {
                         nextTick(() => {
                             if (typeof window.lucide !== 'undefined' && typeof lucide.createIcons === 'function') {
@@ -282,65 +273,76 @@
                         }
                     };
 
-                    // [Create] 写真のアップロード
+                    // [Create] 写真のアップロード（完全修復版）
                     const uploadPhoto = async () => {
                         if (!selectedFile.value) {
-        errorMessage.value = '写真を選択してください。';
-        return;
-    }
+                            errorMessage.value = '写真を選択してください。';
+                            return;
+                        }
 
-    if (!supabase) {
-        errorMessage.value = 'Supabaseの設定キーが未設定です。';
-        return;
-    }
+                        if (!supabase) {
+                            errorMessage.value = 'Supabaseの設定キーが未設定です。';
+                            return;
+                        }
 
-    isUploading.value = true;
-    errorMessage.value = '';
+                        isUploading.value = true;
+                        errorMessage.value = '';
 
-    try {
-        const file = selectedFile.value;
-        const fileExt = file.name.split('.').pop() || 'jpg';
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+                        try {
+                            const file = selectedFile.value;
+                            
+                            // 1. ファイル拡張子の安全な生成
+                            let fileExt = 'jpg';
+                            if (file.type && file.type.includes('/')) {
+                                fileExt = file.type.split('/')[1].replace('jpeg', 'jpg');
+                            }
 
-        // 1. ストレージへ画像アップロード
-        const { data: storageData, error: storageError } = await supabase.storage
-            .from('photos')
-            .upload(fileName, file);
+                            // 2. 完全英数字＋タイムスタンプの安全なパス（ファイル名）を定義
+                            const randomStr = Math.random().toString(36).substring(2, 9);
+                            const fileName = `img_${Date.now()}_${randomStr}.${fileExt}`;
 
-        if (storageError) {
-            console.error('Storage Error:', storageError);
-            throw new Error(`[Storageエラー] ${storageError.message}`);
-        }
+                            // 3. ストレージへ画像アップロード
+                            const { data: storageData, error: storageError } = await supabase.storage
+                                .from('photos')
+                                .upload(fileName, file, {
+                                    cacheControl: '3600',
+                                    upsert: false
+                                });
 
-        // 2. 公開URLの取得
-        const { data: publicUrlData } = supabase.storage
-            .from('photos')
-            .getPublicUrl(fileName);
+                            if (storageError) {
+                                console.error('Storage Error:', storageError);
+                                throw new Error(`【Storageエラー】${storageError.message}`);
+                            }
 
-        const now = Date.now();
-        const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
+                            // 4. 公開URLの取得
+                            const { data: publicUrlData } = supabase.storage
+                                .from('photos')
+                                .getPublicUrl(fileName);
 
-        // 3. データベースへ書き込み
-        const { error: dbError } = await supabase
-            .from('photos')
-            .insert([
-                {
-                    image_url: publicUrlData.publicUrl,
-                    caption: newCaption.value.trim(),
-                    expires_at: expiresAtIso
-                }
-            ]);
+                            const now = Date.now();
+                            const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
 
-        if (dbError) {
-            console.error('DB Error:', dbError);
-            throw new Error(`[DBエラー] ${dbError.message}`);
-        }
+                            // 5. データベースへ書き込み
+                            const { error: dbError } = await supabase
+                                .from('photos')
+                                .insert([
+                                    {
+                                        image_url: publicUrlData.publicUrl,
+                                        caption: newCaption.value.trim(),
+                                        expires_at: expiresAtIso
+                                    }
+                                ]);
 
-        cancelPost();
-        await fetchPhotos();
-    } catch (err) {
-        console.error('Upload Error Details:', err);
-        errorMessage.value = err.message || 'アップロードに失敗しました。';
+                            if (dbError) {
+                                console.error('DB Error:', dbError);
+                                throw new Error(`【DBエラー】${dbError.message}`);
+                            }
+
+                            cancelPost();
+                            await fetchPhotos();
+                        } catch (err) {
+                            console.error('Upload Error Details:', err);
+                            errorMessage.value = err.message || 'アップロードに失敗しました。';
                         } finally {
                             isUploading.value = false;
                         }
@@ -434,7 +436,6 @@
                         refreshIcons();
                     };
 
-                    // 時間表示フォーマット（分:秒）
                     const formatTimeLeft = (expiresAt) => {
                         const diff = expiresAt - Date.now();
                         if (diff <= 0) return '00:00';
@@ -448,7 +449,6 @@
                         return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
                     };
 
-                    // 画面表示用タイマー（1秒更新＆期限切れ自動非表示）
                     const startExpirationCheck = () => {
                         timerInterval = setInterval(() => {
                             const now = Date.now();
