@@ -33,17 +33,19 @@
         }
     </style>
 </head>
-<body class="text-slate-900 min-h-screen flex flex-col justify-between selection:bg-blue-500 selection:text-white">
+<body class="text-slate-900 min-h-screen flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
 
     <div id="app" v-cloak class="flex-1 flex flex-col max-w-md mx-auto w-full min-h-screen bg-white shadow-xl relative pb-24">
         
         <!-- ヘッダー -->
         <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-4 py-3 flex justify-between items-center">
             <div class="flex items-center gap-2">
-                <i :data-lucide="activeTab === 'photo' ? 'camera' : 'file-text'" class="w-6 h-6 text-blue-600 transition-all"></i>
+                <i :data-lucide="activeTab === 'photo' ? 'camera' : (activeTab === 'text' ? 'file-text' : 'file-spreadsheet')" 
+                   :class="activeTab === 'excel' ? 'text-emerald-600' : 'text-blue-600'"
+                   class="w-6 h-6 transition-all"></i>
                 <h1 class="font-bold text-lg tracking-tight">SnapVanis</h1>
             </div>
-            <span class="text-[10px] text-slate-400 font-mono">v2.4.0 (Dual Mode)</span>
+            <span class="text-[10px] text-slate-400 font-mono">v2.5.0 (Triple Mode)</span>
         </header>
 
         <!-- APIキー未設定アラート -->
@@ -269,28 +271,174 @@
                 </section>
             </div>
 
+            <!-- ===================== 3. Excel共有ページ (新規追加) ===================== -->
+            <div v-if="activeTab === 'excel'" key="excel-tab" class="space-y-6">
+                <!-- Excelアップロードエリア -->
+                <section 
+                    class="border-2 border-dashed rounded-2xl p-4 text-center transition-all duration-200"
+                    :class="isDraggingExcel ? 'border-emerald-500 bg-emerald-50/50 scale-[0.99]' : 'border-slate-300 bg-slate-50'"
+                    @dragover.prevent="isDraggingExcel = true"
+                    @dragleave.prevent="isDraggingExcel = false"
+                    @drop.prevent="handleDropExcel"
+                >
+                    <!-- ファイル未選択時 -->
+                    <div v-if="!selectedExcelFile" class="flex flex-col items-center justify-center py-6">
+                        <div class="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 mb-2">
+                            <i data-lucide="file-spreadsheet" class="w-6 h-6"></i>
+                        </div>
+                        
+                        <p class="text-xs font-semibold text-slate-700 mb-1">
+                            Excelファイルをドラッグ＆ドロップ
+                        </p>
+                        <p class="text-[11px] text-slate-400 mb-4">
+                            .xlsx / .xls 対応 (5分後に消去)
+                        </p>
+
+                        <label class="cursor-pointer bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-all text-white text-sm font-medium px-4 py-2 rounded-full shadow-sm flex items-center gap-2 inline-flex">
+                            <i data-lucide="upload" class="w-4 h-4"></i>
+                            <span>Excelファイルを選択</span>
+                            <input type="file" accept=".xlsx, .xls, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" class="hidden" @change="handleExcelSelect">
+                        </label>
+                    </div>
+
+                    <!-- 選択後の表示 -->
+                    <div v-else class="space-y-3">
+                        <div class="flex items-center justify-between p-3.5 bg-white border border-emerald-200 rounded-xl shadow-sm text-left">
+                            <div class="flex items-center gap-3 overflow-hidden">
+                                <div class="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                                    <i data-lucide="sheet" class="w-5 h-5"></i>
+                                </div>
+                                <div class="truncate">
+                                    <p class="text-xs font-semibold text-slate-800 truncate">{{ selectedExcelFile.name }}</p>
+                                    <p class="text-[10px] text-slate-400 mt-0.5">{{ formatFileSize(selectedExcelFile.size) }}</p>
+                                </div>
+                            </div>
+                            <button @click="cancelExcelPost" type="button" class="text-slate-400 hover:text-red-500 p-1.5 rounded-lg transition-all ml-2">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+
+                        <p v-if="excelErrorMessage" class="text-xs text-red-500 text-left flex items-start gap-1 font-medium bg-red-50 p-2 rounded-lg border border-red-100">
+                            <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 mt-0.5"></i>
+                            <span>{{ excelErrorMessage }}</span>
+                        </p>
+
+                        <button 
+                            @click="uploadExcel" 
+                            :disabled="isUploadingExcel"
+                            type="button"
+                            class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 active:scale-98 transition-all text-white text-sm font-semibold py-2.5 rounded-xl shadow-md flex items-center justify-center gap-2"
+                        >
+                            <i data-lucide="share-2" class="w-4 h-4"></i>
+                            <span>{{ isUploadingExcel ? 'アップロード中...' : 'Excel共有を開始する (5分間)' }}</span>
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Excel一覧 -->
+                <section>
+                    <div class="flex items-center justify-between mb-3 px-1">
+                        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                            共有中のExcelファイル ({{ excels.length }})
+                        </h2>
+                        <span class="text-xs text-slate-400 flex items-center gap-1">
+                            <i data-lucide="clock" class="w-3.5 h-3.5"></i> 5分で消滅
+                        </span>
+                    </div>
+
+                    <div v-if="excels.length > 0" class="space-y-3">
+                        <div 
+                            v-for="item in excels" 
+                            :key="item.id" 
+                            class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2.5"
+                        >
+                            <!-- 上部：タイマー & 削除 -->
+                            <div class="flex items-center justify-between">
+                                <span class="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200/60">
+                                    <i data-lucide="timer" class="w-3 h-3 text-amber-500"></i>
+                                    残り {{ formatTimeLeft(item.expiresAt) }}
+                                </span>
+
+                                <button 
+                                    @click="deleteExcel(item.id)" 
+                                    type="button" 
+                                    class="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-all"
+                                    title="削除"
+                                >
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+
+                            <!-- 中部：ファイル情報 -->
+                            <div class="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                                    <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+                                </div>
+                                <div class="truncate flex-1">
+                                    <p class="text-xs font-medium text-slate-800 truncate" :title="item.fileName">{{ item.fileName }}</p>
+                                    <p class="text-[10px] text-slate-400 mt-0.5">{{ formatFileSize(item.fileSize) }}</p>
+                                </div>
+                                <!-- ダウンロードボタン -->
+                                <a 
+                                    :href="item.fileUrl" 
+                                    :download="item.fileName"
+                                    target="_blank"
+                                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+                                >
+                                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                                    <span>保存</span>
+                                </a>
+                            </div>
+
+                            <!-- 下部：投稿時間 -->
+                            <div class="text-right text-[10px] text-slate-400">
+                                投稿日時: {{ formatCreatedTime(item.createdAt) }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else class="text-center py-12 px-4 border border-dashed border-slate-200 rounded-2xl bg-white/50">
+                        <div class="w-12 h-12 mx-auto mb-3 text-slate-300 flex items-center justify-center rounded-full bg-slate-100">
+                            <i data-lucide="sheet" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-sm font-medium text-slate-500">共有中のExcelはありません</p>
+                        <p class="text-xs text-slate-400 mt-1">Excelファイルをアップロードして5分間手軽に共有できます。</p>
+                    </div>
+                </section>
+            </div>
+
         </main>
 
-        <!-- 下部固定ボトムナビゲーション (2ページ切り替え) -->
-        <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-slate-200 px-6 py-2 flex justify-around items-center z-40">
+        <!-- 下部固定ボトムナビゲーション (3ページ切り替え) -->
+        <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-slate-200 px-4 py-2 flex justify-around items-center z-40">
             <button 
                 @click="switchTab('photo')" 
                 type="button" 
-                class="flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all"
+                class="flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all"
                 :class="activeTab === 'photo' ? 'text-blue-600 font-semibold' : 'text-slate-400 hover:text-slate-600'"
             >
                 <i data-lucide="image" class="w-5 h-5"></i>
-                <span class="text-[11px]">画像共有</span>
+                <span class="text-[11px]">画像</span>
             </button>
 
             <button 
                 @click="switchTab('text')" 
                 type="button" 
-                class="flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all"
+                class="flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all"
                 :class="activeTab === 'text' ? 'text-blue-600 font-semibold' : 'text-slate-400 hover:text-slate-600'"
             >
                 <i data-lucide="file-text" class="w-5 h-5"></i>
-                <span class="text-[11px]">文章共有</span>
+                <span class="text-[11px]">文章</span>
+            </button>
+
+            <button 
+                @click="switchTab('excel')" 
+                type="button" 
+                class="flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all"
+                :class="activeTab === 'excel' ? 'text-emerald-600 font-semibold' : 'text-slate-400 hover:text-slate-600'"
+            >
+                <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+                <span class="text-[11px]">Excel</span>
             </button>
         </nav>
 
@@ -320,7 +468,7 @@
 
             createApp({
                 setup() {
-                    const activeTab = ref('photo'); // 'photo' | 'text'
+                    const activeTab = ref('photo'); // 'photo' | 'text' | 'excel'
 
                     // 画像用 State
                     const photos = ref([]);
@@ -337,11 +485,19 @@
                     const isUploadingText = ref(false);
                     const copiedId = ref(null);
 
+                    // Excel用 State
+                    const excels = ref([]);
+                    const selectedExcelFile = ref(null);
+                    const excelErrorMessage = ref('');
+                    const isUploadingExcel = ref(false);
+                    const isDraggingExcel = ref(false);
+
                     const configError = ref(!isConfigValid);
                     const EXPIRATION_TIME_MS = 5 * 60 * 1000; // 5分
                     let timerInterval = null;
                     let photoChannel = null;
                     let textChannel = null;
+                    let excelChannel = null;
 
                     const refreshIcons = () => {
                         nextTick(() => {
@@ -574,6 +730,135 @@
                         }
                     };
 
+                    // ===================== Excel関連処理 =====================
+                    const fetchExcels = async () => {
+                        if (!supabase) return;
+                        try {
+                            const nowIso = new Date().toISOString();
+                            const { data, error } = await supabase
+                                .from('excels')
+                                .select('*')
+                                .gt('expires_at', nowIso)
+                                .order('created_at', { ascending: false });
+
+                            if (error) throw error;
+                            if (data) {
+                                excels.value = data.map(item => ({
+                                    id: item.id,
+                                    fileName: item.file_name,
+                                    fileUrl: item.file_url,
+                                    fileSize: item.file_size || 0,
+                                    createdAt: new Date(item.created_at).getTime(),
+                                    expiresAt: new Date(item.expires_at).getTime()
+                                }));
+                            }
+                        } catch (err) {
+                            console.error('Fetch Excels Error:', err);
+                        } finally {
+                            refreshIcons();
+                        }
+                    };
+
+                    const isExcelFile = (file) => {
+                        const name = file.name.toLowerCase();
+                        return name.endsWith('.xlsx') || name.endsWith('.xls');
+                    };
+
+                    const processExcelFile = (file) => {
+                        excelErrorMessage.value = '';
+                        if (!file) return;
+
+                        if (!isExcelFile(file)) {
+                            excelErrorMessage.value = 'Excelファイル（.xlsx または .xls）を選択してください。';
+                            return;
+                        }
+
+                        selectedExcelFile.value = file;
+                        refreshIcons();
+                    };
+
+                    const handleExcelSelect = (event) => {
+                        const file = event.target.files && event.target.files[0];
+                        processExcelFile(file);
+                    };
+
+                    const handleDropExcel = (event) => {
+                        isDraggingExcel.value = false;
+                        const file = event.dataTransfer.files && event.dataTransfer.files[0];
+                        processExcelFile(file);
+                    };
+
+                    const cancelExcelPost = () => {
+                        selectedExcelFile.value = null;
+                        excelErrorMessage.value = '';
+                        refreshIcons();
+                    };
+
+                    const uploadExcel = async () => {
+                        if (!selectedExcelFile.value) {
+                            excelErrorMessage.value = 'Excelファイルを選択してください。';
+                            return;
+                        }
+                        if (!supabase) {
+                            excelErrorMessage.value = 'Supabaseの設定キーが未設定です。';
+                            return;
+                        }
+
+                        isUploadingExcel.value = true;
+                        excelErrorMessage.value = '';
+
+                        try {
+                            const file = selectedExcelFile.value;
+                            const fileExt = file.name.split('.').pop();
+                            const randomStr = Math.random().toString(36).substring(2, 9);
+                            const storageFileName = `excel_${Date.now()}_${randomStr}.${fileExt}`;
+
+                            // Supabase Storage 'excels' バケットに保存
+                            const { error: storageError } = await supabase.storage
+                                .from('excels')
+                                .upload(storageFileName, file, { cacheControl: '3600', upsert: false });
+
+                            if (storageError) throw new Error(`【Storageエラー】${storageError.message}`);
+
+                            const { data: publicUrlData } = supabase.storage
+                                .from('excels')
+                                .getPublicUrl(storageFileName);
+
+                            const now = Date.now();
+                            const expiresAtIso = new Date(now + EXPIRATION_TIME_MS).toISOString();
+
+                            const { error: dbError } = await supabase
+                                .from('excels')
+                                .insert([{
+                                    file_name: file.name,
+                                    file_url: publicUrlData.publicUrl,
+                                    file_size: file.size,
+                                    expires_at: expiresAtIso
+                                }]);
+
+                            if (dbError) throw new Error(`【DBエラー】${dbError.message}`);
+
+                            cancelExcelPost();
+                            await fetchExcels();
+                        } catch (err) {
+                            console.error('Upload Excel Error:', err);
+                            excelErrorMessage.value = err.message || 'アップロードに失敗しました。';
+                        } finally {
+                            isUploadingExcel.value = false;
+                        }
+                    };
+
+                    const deleteExcel = async (id) => {
+                        if (!supabase) return;
+                        try {
+                            const { error } = await supabase.from('excels').delete().eq('id', id);
+                            if (error) throw error;
+                            await fetchExcels();
+                        } catch (err) {
+                            console.error('Delete Excel Error:', err);
+                        }
+                    };
+
                     // グローバルペーストハンドラ（画像タブ時のみ画像をキャッチ）
                     const handlePaste = (event) => {
                         if (activeTab.value !== 'photo') return;
@@ -601,11 +886,20 @@
                         return new Date(timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
                     };
 
+                    const formatFileSize = (bytes) => {
+                        if (!bytes || bytes === 0) return '0 B';
+                        const k = 1024;
+                        const sizes = ['B', 'KB', 'MB', 'GB'];
+                        const i = Math.floor(Math.log(bytes) / Math.log(k));
+                        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+                    };
+
                     const startExpirationCheck = () => {
                         timerInterval = setInterval(() => {
                             const now = Date.now();
                             photos.value = photos.value.filter(item => item.expiresAt > now);
                             texts.value = texts.value.filter(item => item.expiresAt > now);
+                            excels.value = excels.value.filter(item => item.expiresAt > now);
                         }, 1000);
                     };
 
@@ -625,6 +919,13 @@
                                     fetchTexts();
                                 })
                                 .subscribe();
+
+                            excelChannel = supabase
+                                .channel('public:excels')
+                                .on('postgres_changes', { event: '*', schema: 'public', table: 'excels' }, () => {
+                                    fetchExcels();
+                                })
+                                .subscribe();
                         } catch (err) {
                             console.warn('Realtime subscription error:', err);
                         }
@@ -633,6 +934,7 @@
                     onMounted(() => {
                         fetchPhotos();
                         fetchTexts();
+                        fetchExcels();
                         subscribeRealtime();
                         startExpirationCheck();
                         refreshIcons();
@@ -643,6 +945,7 @@
                         if (timerInterval) clearInterval(timerInterval);
                         if (photoChannel && supabase) supabase.removeChannel(photoChannel);
                         if (textChannel && supabase) supabase.removeChannel(textChannel);
+                        if (excelChannel && supabase) supabase.removeChannel(excelChannel);
                         window.removeEventListener('paste', handlePaste);
                     });
 
@@ -669,10 +972,22 @@
                         deleteText,
                         copyText,
                         copiedId,
+                        // Excel
+                        excels,
+                        selectedExcelFile,
+                        excelErrorMessage,
+                        isUploadingExcel,
+                        isDraggingExcel,
+                        handleExcelSelect,
+                        handleDropExcel,
+                        cancelExcelPost,
+                        uploadExcel,
+                        deleteExcel,
                         // 共通
                         configError,
                         formatTimeLeft,
-                        formatCreatedTime
+                        formatCreatedTime,
+                        formatFileSize
                     };
                 }
             }).mount('#app');
